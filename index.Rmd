@@ -201,7 +201,7 @@ renderDT({
     datatable(
       colnames = c("Provincia", "Cantón", "Distrito", "Área (km2)"),
       options = list(
-        pageLength = 10,
+        pageLength = 5,
         language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json')
       )
     )
@@ -222,13 +222,13 @@ renderPlotly({
   grafico_ggplot2 <-
     distritos %>%
     st_drop_geometry() %>%
-    slice_max(area, n = 10) %>%
-    ggplot(aes(x = reorder(distrito,-area), y = area)) +
+    slice_max(area, n = 12) %>%
+    ggplot(aes(x = reorder(distrito, -area), y = area)) +
     geom_bar(stat = "identity", fill = "blue") +
     xlab("Distrito") +
     ylab("Área (km2)")
   
-  ggplotly(grafico_ggplot2)
+  ggplotly(grafico_ggplot2) %>% config(locale = 'es')
 })
 ```
 
