@@ -1,0 +1,234 @@
+---
+title: "Datos de distritos de Costa Rica - flexdashboard + Shiny"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    theme:
+      version: 3
+      bootswatch: cosmo
+runtime: shiny       
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r paquetes}
+# Carga de paquetes
+
+library(dplyr)
+library(sf)
+library(DT)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(shiny)
+```
+
+```{r lectura-datos}
+# Lectura de datos
+
+distritos <-
+  st_read(dsn = "distritos_simplificados.geojson", quiet = TRUE) %>%
+  st_transform(4326)
+```
+
+```{r lista-provincias}
+# Lista ordenada de provincias + "Todas"
+
+lista_provincias <- unique(distritos$provincia)
+lista_provincias <- sort(lista_provincias)
+lista_provincias <- c("Todas", lista_provincias)
+```
+
+```{r lista-cantones}
+# Lista ordenada de cantones + "Todos"
+
+lista_cantones <- unique(distritos$canton)
+lista_cantones <- sort(lista_cantones)
+lista_cantones <- c("Todos", lista_cantones)
+```
+
+Column {.sidebar}
+-------------------------------------
+
+```{r filtros}
+# Filtros de datos
+
+
+# Encabezado de la columna
+h3("Filtros de datos")
+
+# Provincia
+selectInput(
+  inputId = "provincia",
+  label = "Provincia",
+  choices = lista_provincias,
+  selected = "Todas"
+)
+
+# Cantón
+selectInput(
+  inputId = "canton",
+  label = "Cantón",
+  choices = lista_cantones,
+  selected = "Todos"
+)
+
+# Área
+sliderInput(
+  "area",
+  label = "Área (km2)",
+  min = floor(min(distritos$area)),
+  max = ceiling(max(distritos$area)),
+  value = c(floor(min(distritos$area)), ceiling(max(distritos$area)))
+)
+
+
+# Función para filtrar los datos con base en los controles de entrada
+filtrarDistritos <- reactive({
+  # Valor inicial del objeto que va a retornarse
+  distritos_filtrados <- distritos
+  
+  # Filtrado de distritos por provincia
+  if (input$provincia != "Todas") {
+    distritos_filtrados <-
+      distritos_filtrados %>%
+      filter(provincia == input$provincia)
+    
+    if (input$canton == "Todos") {
+      # HAY QUE ESTAR ATENTO PARA VER SI ESTE FILTRO DE CANTONES FUNCIONA BIEN
+      # CON ESTE CÓDIGO UBICADO SOLO AQUÍ O SI DEBE COLOCARSE EN OTRAS PARTES
+      
+      # Lista ordenada de cantones + "Todos"
+      distritos_provincia <- filter(distritos, provincia == input$provincia)
+      lista_cantones <- unique(distritos_provincia$canton)
+      lista_cantones <- sort(lista_cantones)
+      lista_cantones <- c("Todos", lista_cantones)
+      
+      updateSelectInput(
+        session,
+        "canton",
+        label = "Cantón",
+        choices = lista_cantones,
+        selected = "Todos"
+      )
+    }
+  }
+  
+  # Filtrado de distritos por cantón
+  if (input$canton != "Todos") {
+    distritos_filtrados <-
+      distritos_filtrados %>%
+      filter(canton == input$canton)
+  }  
+  
+  # Filtrado de distritos por área
+  distritos_filtrados <-
+    distritos_filtrados %>%
+    filter(area >= input$area[1] & area <= input$area[2])
+
+  
+  return(distritos_filtrados)
+})
+```
+
+Row {data-height=10}
+-----------------------------------------------------------------------
+
+### **Fuente de los datos: [Instituto Geográfico Nacional (IGN)](https://www.snitcr.go.cr/ico_servicios_ogc_info?k=bm9kbzo6MjY=&nombre=IGN%20Cartograf%C3%ADa%201:5mil)**
+
+Row {data-height=590}
+-----------------------------------------------------------------------
+
+### Mapa
+
+```{r}
+# Mapa
+
+
+# Paleta de colores
+colores_distritos_area <-
+  colorNumeric(palette = "Blues",
+               domain = distritos$area,
+               na.color = "transparent")
+
+
+renderLeaflet({
+  distritos <- filtrarDistritos()
+  
+  leaflet() %>%
+    addTiles(group = "OpenStreetMap") %>%
+    addPolygons(
+      data = distritos,
+      fillColor = ~ colores_distritos_area(distritos$area),
+      fillOpacity = 0.7,      
+      color = "black",
+      weight = 1.5,
+      popup = paste(
+        paste("<a>Cantón:</a>", distritos$canton),
+        paste("<a>Distrito:</a>", distritos$distrito),
+        paste("<a>Área:</a>", distritos$area, "km2"),
+        sep = "<br>"
+      ),
+      group = "Distritos"
+    ) %>%
+    addLayersControl(baseGroups = c("OpenStreetMap"),
+                     overlayGroups = c("Distritos")) %>%
+  addLegend(
+    # leyenda
+    position = "bottomleft",
+    pal = colores_distritos_area,
+    values = distritos$area,
+    group = "Distritos",
+    title = "Área (km2)"
+  )
+})
+```
+
+### Tabla
+
+```{r tabla}
+# Tabla
+
+renderDT({
+  distritos <- filtrarDistritos()
+  
+  distritos %>%
+    st_drop_geometry() %>%
+    select(provincia, canton, distrito, area) %>%
+    arrange(desc(area)) %>%
+    datatable(
+      colnames = c("Provincia", "Cantón", "Distrito", "Área (km2)"),
+      options = list(
+        pageLength = 10,
+        language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/Spanish.json')
+      )
+    )
+})
+```
+
+Row {data-height=400}
+-----------------------------------------------------------------------
+
+### Gráfico de distritos con mayor área
+
+```{r grafico}
+# Gráfico
+
+renderPlotly({
+  distritos <- filtrarDistritos()
+  
+  grafico_ggplot2 <-
+    distritos %>%
+    st_drop_geometry() %>%
+    slice_max(area, n = 10) %>%
+    ggplot(aes(x = reorder(distrito,-area), y = area)) +
+    geom_bar(stat = "identity", fill = "blue") +
+    xlab("Distrito") +
+    ylab("Área (km2)")
+  
+  ggplotly(grafico_ggplot2)
+})
+```
+
